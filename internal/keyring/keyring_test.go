@@ -29,14 +29,35 @@ func TestSaveAndGetData(t *testing.T) {
 */
 
 func TestNoKey(t *testing.T) {
-	keyring, err := SessionKeyring.CreateKeyring()
-	if err != nil {
-		t.Fatalf("failed getting keyring: %v", err)
-	}
-	_, err = keyring.ReadKey("this.key.does.not.exist")
-	if !errors.Is(err, syscall.ENOKEY) {
-		t.Fatalf("err: %v", err)
-	}
+    t.Log("Starting TestNoKey: testing behavior when reading non-existent key")
+    
+    t.Log("Creating keyring...")
+    keyring, err := SessionKeyring.CreateKeyring()
+    if err != nil {
+        t.Logf("ERROR: Failed to create keyring: %v", err)
+        t.Fatalf("failed getting keyring: %v", err)
+    }
+    t.Log("Keyring created successfully")
+    
+    keyName := "this.key.does.not.exist"
+    t.Logf("Attempting to read non-existent key: '%s'", keyName)
+    
+    result, err := keyring.ReadKey(keyName)
+    if err != nil {
+        t.Logf("ReadKey returned error as expected: %v", err)
+        t.Logf("Error type: %T", err)
+    } else {
+        t.Logf("WARNING: ReadKey succeeded unexpectedly, result: %v", result)
+    }
+    
+    t.Log("Checking if error is syscall.ENOKEY...")
+    if !errors.Is(err, syscall.ENOKEY) {
+        t.Logf("ERROR: Expected syscall.ENOKEY but got: %v", err)
+        t.Logf("Error type: %T", err)
+        t.Fatalf("err: %v", err)
+    }
+    
+    t.Log("SUCCESS: Test passed - correctly returned syscall.ENOKEY for non-existent key")
 }
 
 /*

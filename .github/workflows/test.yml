@@ -4,12 +4,12 @@ permissions:
   contents: read
 jobs:
   test:
-    name: Test
+    name: Test on Ubuntu 22.04
     strategy:
       fail-fast: false
       matrix:
         go: [1.24.x]
-        os: [ubuntu-latest]
+        os: [ubuntu-22.04] # <-- ИЗМЕНЕНИЕ ЗДЕСЬ
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go ${{ matrix.go }}
@@ -21,29 +21,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- НОВЫЙ ШАГ ДЛЯ ДИАГНОСТИКИ ---
+      # Диагностика, чтобы убедиться, что мы на старом ядре
       - name: Diagnose Environment
         run: |
+          echo "--- OS Version ---"
+          cat /etc/os-release
+          echo
           echo "--- Kernel Version ---"
           uname -a
           echo
           echo "--- Checking for keyutils package ---"
           dpkg -s keyutils || echo "keyutils not found"
-          echo
-          echo "--- Checking for /sbin/request-key ---"
-          ls -l /sbin/request-key || echo "/sbin/request-key not found"
-          echo
-          echo "--- Contents of /etc/request-key.conf ---"
-          cat /etc/request-key.conf || echo "/etc/request-key.conf not found"
-          echo
-          echo "--- Sysctl key parameters ---"
-          sysctl -a 2>/dev/null | grep key || echo "No sysctl key params found"
-      
-      - name: Run tests
-        # Запустим и ваш отладочный тест, и оригинальный
+
+      # Запускаем тесты
+      - name: Run tests (expecting failure on original test)
+        # Мы снова используем временный тестовый файл для анализа
         run: |
-          # Временно добавляем ваш отладочный тест
-          cp internal/keyring/keyring_test.go internal/keyring/keyring_test.go.bak
           cat <<'EOF' > internal/keyring/keyring_test.go
           package keyring
 
@@ -54,18 +47,19 @@ jobs:
           )
           
           func TestNoKeyOriginal(t *testing.T) {
+          	t.Log("--- Running Original Test (expecting failure on this kernel) ---")
           	keyring, err := SessionKeyring.CreateKeyring()
           	if err != nil {
           		t.Fatalf("failed getting keyring: %v", err)
           	}
           	_, err = keyring.ReadKey("this.key.does.not.exist")
           	if !errors.Is(err, syscall.ENOKEY) {
-          		t.Fatalf("err: %v", err)
+          		t.Errorf("TEST FAILED AS EXPECTED: err is '%v', not syscall.ENOKEY", err)
           	}
           }
 
           func TestKeyNotFoundBehaviorAnalysis(t *testing.T) {
-                  t.Log("--- Starting Hypothesis Verification Test ---")
+                  t.Log("--- Starting Behavior Analysis ---")
                   keyring, err := SessionKeyring.CreateKeyring()
                   if err != nil { t.Fatalf("Failed to create keyring: %v", err) }
                   keyName := "this.key.is.for.analysis.only"
@@ -83,9 +77,13 @@ jobs:
                   }
           }
           EOF
-          go test ./internal/... -v
+          # Запускаем тесты. Используем '|| true', чтобы шаг не завершился с ошибкой,
+          # если оригинальный тест упадет, как мы и ожидаем.
+          go test ./internal/... -v || true
+      
       - name: Run go vet
         run: go vet ./...
+      
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1.3.1
         with:

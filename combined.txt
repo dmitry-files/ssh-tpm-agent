@@ -1,0 +1,523 @@
+=== Файл: ./keytest/keytest.go ===
+package keytest
+
+import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"net"
+	"path"
+	"testing"
+
+	keyfile "github.com/foxboron/go-tpm-keyfiles"
+	"github.com/foxboron/ssh-tpm-agent/agent"
+	"github.com/foxboron/ssh-tpm-agent/internal/keyring"
+	"github.com/foxboron/ssh-tpm-agent/key"
+	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
+	"golang.org/x/crypto/ssh"
+	sshagent "golang.org/x/crypto/ssh/agent"
+)
+
+// Represents the type for MkKey and mkImportableKey
+type KeyFunc func(*testing.T, transport.TPMCloser, tpm2.TPMAlgID, int, []byte, string) (*key.SSHTPMKey, error)
+
+func MkRSA(t *testing.T, bits int) rsa.PrivateKey {
+	t.Helper()
+	pk, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("failed to generate rsa key: %v", err)
+	}
+	return *pk
+}
+
+func MkECDSA(t *testing.T, a elliptic.Curve) ecdsa.PrivateKey {
+	t.Helper()
+	pk, err := ecdsa.GenerateKey(a, rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ecdsa key: %v", err)
+	}
+	return *pk
+}
+
+// Test helper for CreateKey
+func MkKey(t *testing.T, tpm transport.TPMCloser, keytype tpm2.TPMAlgID, bits int, pin []byte, comment string) (*key.SSHTPMKey, error) {
+	t.Helper()
+	return key.NewSSHTPMKey(tpm, keytype, bits, []byte(""),
+		keyfile.WithUserAuth(pin),
+		keyfile.WithDescription(comment),
+	)
+}
+
+func MkCertificate(t *testing.T, ca crypto.Signer) KeyFunc {
+	t.Helper()
+	return func(t *testing.T, tpm transport.TPMCloser, keytype tpm2.TPMAlgID, bits int, pin []byte, comment string) (*key.SSHTPMKey, error) {
+		k, err := MkKey(t, tpm, keytype, bits, pin, comment)
+		if err != nil {
+			t.Fatalf("message")
+		}
+
+		signer, err := ssh.NewSignerFromKey(ca)
+		if err != nil {
+			t.Fatalf("unable to generate signer from key: %v", err)
+		}
+		mas, err := ssh.NewSignerWithAlgorithms(signer.(ssh.AlgorithmSigner), []string{ssh.KeyAlgoECDSA256})
+		if err != nil {
+			t.Fatalf("unable to create signer with algorithms: %v", err)
+		}
+
+		k.Certificate = &ssh.Certificate{
+			Key:      *k.PublicKey,
+			CertType: ssh.UserCert,
+		}
+		if err := k.Certificate.SignCert(rand.Reader, mas); err != nil {
+			t.Fatalf("unable to sign certificate: %v", err)
+		}
+
+		return k, nil
+	}
+}
+
+// Helper to make an importable key
+func MkImportableKey(t *testing.T, tpm transport.TPMCloser, keytype tpm2.TPMAlgID, bits int, pin []byte, comment string) (*key.SSHTPMKey, error) {
+	t.Helper()
+	var pk any
+	switch keytype {
+	case tpm2.TPMAlgECC:
+		switch bits {
+		case 256:
+			pk = MkECDSA(t, elliptic.P256())
+		case 384:
+			pk = MkECDSA(t, elliptic.P384())
+		case 521:
+			pk = MkECDSA(t, elliptic.P521())
+		}
+	case tpm2.TPMAlgRSA:
+		pk = MkRSA(t, bits)
+	}
+	return key.NewImportedSSHTPMKey(tpm, pk, []byte(""),
+		keyfile.WithUserAuth(pin),
+		keyfile.WithDescription(comment))
+}
+
+// Give us some random bytes
+func MustRand(size int) []byte {
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+
+	return b
+}
+
+func NewTestAgent(t *testing.T, tpm transport.TPMCloser) *agent.Agent {
+	unixList, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: path.Join(t.TempDir(), "socket")})
+	if err != nil {
+		t.Fatalf("failed listening: %v", err)
+	}
+	return agent.NewAgent(unixList,
+		[]sshagent.ExtendedAgent{},
+		func() *keyring.ThreadKeyring { return &keyring.ThreadKeyring{} },
+		func() transport.TPMCloser { return tpm },
+		func() ([]byte, error) { return []byte(""), nil },
+		func(_ key.SSHTPMKeys) ([]byte, error) {
+			return []byte(""), nil
+		},
+	)
+}
+
+=== Файл: ./lsm/lsm.go ===
+package lsm
+
+import (
+	"log/slog"
+	"os"
+
+	"github.com/foxboron/ssh-tpm-agent/askpass"
+	"github.com/landlock-lsm/go-landlock/landlock"
+)
+
+var rules []landlock.Rule
+
+func HasLandlock() bool {
+	_, ok := os.LookupEnv("SSH_TPM_LANDLOCK")
+	return ok
+}
+
+func RestrictAdditionalPaths(r ...landlock.Rule) {
+	rules = append(rules, r...)
+}
+
+func RestrictAgentFiles() {
+	RestrictAdditionalPaths(
+		// Probably what we need to do for most askpass binaries
+		landlock.RWDirs(
+			"/usr/lib",
+		).IgnoreIfMissing(),
+		// Default Go paths
+		landlock.ROFiles(
+			"/proc/sys/net/core/somaxconn",
+			"/etc/localtime",
+			"/dev/null",
+		),
+		// We almost always want to read the TPM
+		landlock.RWFiles(
+			"/dev/tpm0",
+			"/dev/tpmrm0",
+		),
+		// Ensure we can read+exec askpass binaries
+		landlock.ROFiles(
+			askpass.SSH_ASKPASS_DEFAULTS...,
+		).IgnoreIfMissing(),
+	)
+}
+
+func Restrict() error {
+	if !HasLandlock() {
+		return nil
+	}
+	slog.Debug("sandboxing with landlock")
+	for _, r := range rules {
+		slog.Debug("landlock", slog.Any("rule", r))
+	}
+	landlock.V5.BestEffort().RestrictNet()
+	return landlock.V5.BestEffort().RestrictPaths(rules...)
+}
+
+=== Файл: ./keyring/keyring_test.go ===
+package keyring
+
+import (
+	"errors"
+	"syscall"
+	"testing"
+)
+
+/*
+func TestSaveAndGetData(t *testing.T) {
+	keyring, err := SessionKeyring.CreateKeyring()
+	if err != nil {
+		t.Fatalf("failed getting keyring: %v", err)
+	}
+
+	b := []byte("test string")
+	if err := keyring.AddKey("test", b); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	bb, err := keyring.ReadKey("test")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !bytes.Equal(b, bb.Read()) {
+		t.Fatalf("strings not equal")
+	}
+}
+*/
+
+func TestNoKey(t *testing.T) {
+    t.Log("Starting TestNoKey: testing behavior when reading non-existent key")
+    
+    t.Log("Creating keyring...")
+    keyring, err := SessionKeyring.CreateKeyring()
+    if err != nil {
+        t.Logf("ERROR: Failed to create keyring: %v", err)
+        t.Fatalf("failed getting keyring: %v", err)
+    }
+    t.Log("Keyring created successfully")
+    
+    keyName := "this.key.does.not.exist"
+    
+    // Первая попытка чтения
+    t.Logf("=== First attempt to read key ===")
+    t.Logf("Attempting to read non-existent key: '%s'", keyName)
+    
+    result1, err1 := keyring.ReadKey(keyName)
+    if err1 != nil {
+        t.Logf("ReadKey returned error: %v", err1)
+        t.Logf("Error type: %T", err1)
+    } else {
+        t.Logf("WARNING: ReadKey succeeded unexpectedly, result: %v", result1)
+    }
+    
+    // Вторая попытка чтения того же ключа
+    t.Logf("=== Second attempt to read the same key ===")
+    t.Logf("Attempting to read non-existent key again: '%s'", keyName)
+    
+    result2, err2 := keyring.ReadKey(keyName)
+    if err2 != nil {
+        t.Logf("ReadKey returned error: %v", err2)
+        t.Logf("Error type: %T", err2)
+    } else {
+        t.Logf("WARNING: ReadKey succeeded unexpectedly, result: %v", result2)
+    }
+    
+    // Проверяем что обе ошибки равны и соответствуют ENOKEY
+    t.Log("=== Comparing results from both attempts ===")
+    t.Logf("First error: %v (type: %T)", err1, err1)
+    t.Logf("Second error: %v (type: %T)", err2, err2)
+    
+    // Проверяем что обе ошибки равны друг другу
+    if err1 != err2 {
+        t.Logf("ERROR: Errors from two attempts are not equal")
+        t.Logf("First error: %v", err1)
+        t.Logf("Second error: %v", err2)
+        t.Fatalf("errors from two attempts are not equal: %v vs %v", err1, err2)
+    }
+    t.Log("Both errors are equal")
+    
+    // Проверяем что ошибка соответствует ENOKEY
+    t.Log("Checking if error is syscall.ENOKEY...")
+    if !errors.Is(err1, syscall.ENOKEY) {
+        t.Logf("ERROR: Expected syscall.ENOKEY but got: %v", err1)
+        t.Logf("Error type: %T", err1)
+        t.Fatalf("err: %v", err1)
+    }
+    
+    t.Log("SUCCESS: Test passed - both attempts returned identical syscall.ENOKEY errors for non-existent key")
+}
+
+/*
+func TestRemoveKey(t *testing.T) {
+	keyring, err := SessionKeyring.CreateKeyring()
+	if err != nil {
+		t.Fatalf("failed getting keyring: %v", err)
+	}
+	b := []byte("test string")
+	if err := keyring.AddKey("test-2", b); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	bb, err := keyring.ReadKey("test-2")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !bytes.Equal(b, bb.Read()) {
+		t.Fatalf("strings not equal")
+	}
+
+	if err = keyring.RemoveKey("test-2"); err != nil {
+		t.Fatalf("failed removing key: %v", err)
+	}
+	_, err = keyring.ReadKey("test-2")
+	if !errors.Is(err, syscall.ENOKEY) {
+		t.Fatalf("we can still read the key")
+	}
+}
+*/
+
+=== Файл: ./keyring/key.go ===
+package keyring
+
+import (
+	"github.com/awnumar/memcall"
+	"golang.org/x/sys/unix"
+)
+
+// Key is a boxed byte slice where we allocate the underlying memory with memcall
+type Key struct {
+	b []byte
+}
+
+func (k *Key) Read() []byte {
+	if k == nil {
+		return []byte{}
+	}
+	return k.b
+}
+
+func (k *Key) Free() error {
+	return memcall.Free(k.b)
+}
+
+func ReadKeyIntoMemory(id int) (*Key, error) {
+	sz, err := unix.KeyctlBuffer(unix.KEYCTL_READ, int(id), nil, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	buffer, err := memcall.Alloc(sz)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err = unix.KeyctlBuffer(unix.KEYCTL_READ, int(id), buffer, 0); err != nil {
+		return nil, err
+	}
+
+	if err := memcall.Lock(buffer); err != nil {
+		return nil, err
+	}
+
+	return &Key{buffer}, nil
+}
+
+=== Файл: ./keyring/threadkeyring.go ===
+package keyring
+
+import (
+	"context"
+	"runtime"
+	"sync"
+)
+
+// ThreadKeyring runs Keyring in a dedicated OS Thread
+type ThreadKeyring struct {
+	wg        sync.WaitGroup
+	addkey    chan *addkeyMsg
+	removekey chan *removekeyMsg
+	readkey   chan *readkeyMsg
+}
+
+type addkeyMsg struct {
+	name string
+	key  []byte
+	cb   chan error
+}
+
+type removekeyMsg struct {
+	name string
+	cb   chan error
+}
+
+type readkeyRet struct {
+	key *Key
+	err error
+}
+
+type readkeyMsg struct {
+	name string
+	cb   chan *readkeyRet
+}
+
+func (tk *ThreadKeyring) Wait() {
+	tk.wg.Wait()
+}
+
+func (tk *ThreadKeyring) AddKey(name string, key []byte) error {
+	cb := make(chan error)
+	tk.addkey <- &addkeyMsg{name, key, cb}
+	return <-cb
+}
+
+func (tk *ThreadKeyring) RemoveKey(name string) error {
+	cb := make(chan error)
+	tk.removekey <- &removekeyMsg{name, cb}
+	return <-cb
+}
+
+func (tk *ThreadKeyring) ReadKey(name string) (*Key, error) {
+	cb := make(chan *readkeyRet)
+	tk.readkey <- &readkeyMsg{name, cb}
+	ret := <-cb
+	if ret.err != nil {
+		return nil, ret.err
+	}
+	return ret.key, nil
+}
+
+func NewThreadKeyring(ctx context.Context, keyring *Keyring) (*ThreadKeyring, error) {
+	var err error
+	var tk ThreadKeyring
+
+	tk.addkey = make(chan *addkeyMsg)
+	tk.removekey = make(chan *removekeyMsg)
+	tk.readkey = make(chan *readkeyMsg)
+
+	// Channel for initialization to prevent Data Race
+	errCh := make(chan error, 1)
+
+	tk.wg.Add(1)
+	go func() {
+		var ak *Keyring
+		runtime.LockOSThread()
+		ak, err = keyring.CreateKeyring()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+		for {
+			select {
+			case msg := <-tk.addkey:
+				msg.cb <- ak.AddKey(msg.name, msg.key)
+			case msg := <-tk.readkey:
+				key, err := ak.ReadKey(msg.name)
+				msg.cb <- &readkeyRet{key, err}
+			case msg := <-tk.removekey:
+				msg.cb <- ak.RemoveKey(msg.name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait for initialization to complete
+	if err := <-errCh; err != nil {
+		return nil, err
+	}
+
+	return &tk, err
+}
+
+=== Файл: ./keyring/keyring.go ===
+package keyring
+
+import (
+	"fmt"
+	"log/slog"
+
+	"golang.org/x/sys/unix"
+)
+
+var (
+	SessionKeyring *Keyring = &Keyring{ringid: unix.KEY_SPEC_SESSION_KEYRING}
+)
+
+type Keyring struct {
+	ringid int
+}
+
+func (ring *Keyring) CreateKeyring() (*Keyring, error) {
+	id, err := unix.KeyctlJoinSessionKeyring("ssh-tpm-agent")
+	if err != nil {
+		return nil, err
+	}
+
+	return &Keyring{ringid: id}, nil
+}
+
+func (k *Keyring) AddKey(name string, b []byte) error {
+	slog.Debug("addkey", slog.String("name", name))
+	_, err := unix.AddKey("user", name, b, k.ringid)
+	if err != nil {
+		return fmt.Errorf("failed add-key: %v", err)
+	}
+	return nil
+}
+
+func (k *Keyring) ReadKey(name string) (*Key, error) {
+	slog.Debug("readkey", slog.String("name", name))
+	id, err := unix.RequestKey("user", name, "", k.ringid)
+	if err != nil {
+		return nil, err
+	}
+	b, err := ReadKeyIntoMemory(id)
+	if err != nil {
+		return nil, err
+	}
+	return b, err
+}
+
+func (k *Keyring) RemoveKey(name string) error {
+	slog.Debug("removekey", slog.String("name", name))
+	id, err := unix.RequestKey("user", name, "", k.ringid)
+	if err != nil {
+		return fmt.Errorf("failed remove-key: %v", err)
+	}
+	_, err = unix.KeyctlInt(unix.KEYCTL_UNLINK, id, k.ringid, 0, 0)
+	return err
+}
+

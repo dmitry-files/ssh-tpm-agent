@@ -20,11 +20,74 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
+
+      # --- НОВЫЙ ШАГ ДЛЯ ДИАГНОСТИКИ ---
+      - name: Diagnose Environment
+        run: |
+          echo "--- Kernel Version ---"
+          uname -a
+          echo
+          echo "--- Checking for keyutils package ---"
+          dpkg -s keyutils || echo "keyutils not found"
+          echo
+          echo "--- Checking for /sbin/request-key ---"
+          ls -l /sbin/request-key || echo "/sbin/request-key not found"
+          echo
+          echo "--- Contents of /etc/request-key.conf ---"
+          cat /etc/request-key.conf || echo "/etc/request-key.conf not found"
+          echo
+          echo "--- Sysctl key parameters ---"
+          sysctl -a 2>/dev/null | grep key || echo "No sysctl key params found"
+      
       - name: Run tests
-        run: go test ./internal/... -v
+        # Запустим и ваш отладочный тест, и оригинальный
+        run: |
+          # Временно добавляем ваш отладочный тест
+          cp internal/keyring/keyring_test.go internal/keyring/keyring_test.go.bak
+          cat <<'EOF' > internal/keyring/keyring_test.go
+          package keyring
+
+          import (
+          	"errors"
+          	"syscall"
+          	"testing"
+          )
+          
+          func TestNoKeyOriginal(t *testing.T) {
+          	keyring, err := SessionKeyring.CreateKeyring()
+          	if err != nil {
+          		t.Fatalf("failed getting keyring: %v", err)
+          	}
+          	_, err = keyring.ReadKey("this.key.does.not.exist")
+          	if !errors.Is(err, syscall.ENOKEY) {
+          		t.Fatalf("err: %v", err)
+          	}
+          }
+
+          func TestKeyNotFoundBehaviorAnalysis(t *testing.T) {
+                  t.Log("--- Starting Hypothesis Verification Test ---")
+                  keyring, err := SessionKeyring.CreateKeyring()
+                  if err != nil { t.Fatalf("Failed to create keyring: %v", err) }
+                  keyName := "this.key.is.for.analysis.only"
+                  _, err1 := keyring.ReadKey(keyName)
+                  if err1 != nil {
+                          t.Logf("First Attempt Error: %v (%T)", err1, err1)
+                          t.Logf("Is ENOENT: %v", errors.Is(err1, syscall.ENOENT))
+                          t.Logf("Is ENOKEY: %v", errors.Is(err1, syscall.ENOKEY))
+                  }
+                  _, err2 := keyring.ReadKey(keyName)
+                  if err2 != nil {
+                          t.Logf("Second Attempt Error: %v (%T)", err2, err2)
+                          t.Logf("Is ENOENT: %v", errors.Is(err2, syscall.ENOENT))
+                          t.Logf("Is ENOKEY: %v", errors.Is(err2, syscall.ENOKEY))
+                  }
+          }
+          EOF
+          go test ./internal/... -v
       - name: Run go vet
         run: go vet ./...
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1.3.1
         with:
           install-go: false
+          

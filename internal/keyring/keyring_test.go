@@ -1,7 +1,6 @@
 package keyring
 
 import (
-	"bytes"
 	"errors"
 	"syscall"
 	"testing"

@@ -4,12 +4,12 @@ permissions:
   contents: read
 jobs:
   test:
-    name: Test on Ubuntu 20.04
+    name: Test on Debian Latest
     strategy:
       fail-fast: false
       matrix:
         go: [1.24.x]
-        os: [ubuntu-20.04] # <-- ИЗМЕНЕНИЕ: используем еще более старую версию
+        os: [debian-latest] # <-- ИЗМЕНЕНИЕ: используем Debian
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go ${{ matrix.go }}
@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Диагностика, чтобы увидеть версию ядра
+      # Диагностика
       - name: Diagnose Environment
         run: |
           echo "--- OS Version ---"

@@ -53,14 +53,6 @@ func TestNoKey(t *testing.T) {
         t.Logf("WARNING: ReadKey succeeded unexpectedly, result: %v", result1)
     }
     
-    t.Log("Checking if error is syscall.ENOKEY...")
-    if !errors.Is(err1, syscall.ENOKEY) {
-        t.Logf("ERROR: Expected syscall.ENOKEY but got: %v", err1)
-        t.Logf("Error type: %T", err1)
-        t.Fatalf("err: %v", err1)
-    }
-    t.Log("First attempt: correctly returned syscall.ENOKEY")
-    
     // Вторая попытка чтения того же ключа
     t.Logf("=== Second attempt to read the same key ===")
     t.Logf("Attempting to read non-existent key again: '%s'", keyName)
@@ -73,15 +65,29 @@ func TestNoKey(t *testing.T) {
         t.Logf("WARNING: ReadKey succeeded unexpectedly, result: %v", result2)
     }
     
-    t.Log("Checking if error is syscall.ENOKEY...")
-    if !errors.Is(err2, syscall.ENOKEY) {
-        t.Logf("ERROR: Expected syscall.ENOKEY but got: %v", err2)
-        t.Logf("Error type: %T", err2)
-        t.Fatalf("err: %v", err2)
-    }
-    t.Log("Second attempt: correctly returned syscall.ENOKEY")
+    // Проверяем что обе ошибки равны и соответствуют ENOKEY
+    t.Log("=== Comparing results from both attempts ===")
+    t.Logf("First error: %v (type: %T)", err1, err1)
+    t.Logf("Second error: %v (type: %T)", err2, err2)
     
-    t.Log("SUCCESS: Test passed - both attempts correctly returned syscall.ENOKEY for non-existent key")
+    // Проверяем что обе ошибки равны друг другу
+    if err1 != err2 {
+        t.Logf("ERROR: Errors from two attempts are not equal")
+        t.Logf("First error: %v", err1)
+        t.Logf("Second error: %v", err2)
+        t.Fatalf("errors from two attempts are not equal: %v vs %v", err1, err2)
+    }
+    t.Log("Both errors are equal")
+    
+    // Проверяем что ошибка соответствует ENOKEY
+    t.Log("Checking if error is syscall.ENOKEY...")
+    if !errors.Is(err1, syscall.ENOKEY) {
+        t.Logf("ERROR: Expected syscall.ENOKEY but got: %v", err1)
+        t.Logf("Error type: %T", err1)
+        t.Fatalf("err: %v", err1)
+    }
+    
+    t.Log("SUCCESS: Test passed - both attempts returned identical syscall.ENOKEY errors for non-existent key")
 }
 
 /*

@@ -4,12 +4,12 @@ permissions:
   contents: read
 jobs:
   test:
-    name: Test on Ubuntu 22.04
+    name: Test on Ubuntu 20.04
     strategy:
       fail-fast: false
       matrix:
         go: [1.24.x]
-        os: [ubuntu-22.04] # <-- ИЗМЕНЕНИЕ ЗДЕСЬ
+        os: [ubuntu-20.04] # <-- ИЗМЕНЕНИЕ: используем еще более старую версию
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go ${{ matrix.go }}
@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Диагностика, чтобы убедиться, что мы на старом ядре
+      # Диагностика, чтобы увидеть версию ядра
       - name: Diagnose Environment
         run: |
           echo "--- OS Version ---"
@@ -29,14 +29,11 @@ jobs:
           echo
           echo "--- Kernel Version ---"
           uname -a
-          echo
-          echo "--- Checking for keyutils package ---"
-          dpkg -s keyutils || echo "keyutils not found"
 
-      # Запускаем тесты
+      # Запускаем тесты с ожиданием падения
       - name: Run tests (expecting failure on original test)
-        # Мы снова используем временный тестовый файл для анализа
         run: |
+          # Используем временный тестовый файл для анализа
           cat <<'EOF' > internal/keyring/keyring_test.go
           package keyring
 
@@ -54,7 +51,8 @@ jobs:
           	}
           	_, err = keyring.ReadKey("this.key.does.not.exist")
           	if !errors.Is(err, syscall.ENOKEY) {
-          		t.Errorf("TEST FAILED AS EXPECTED: err is '%v', not syscall.ENOKEY", err)
+          		// Эта ветка должна сработать, если гипотеза верна
+          		t.Fatalf("TEST FAILED AS EXPECTED: err is '%v', not syscall.ENOKEY", err)
           	}
           }
 
@@ -77,8 +75,7 @@ jobs:
                   }
           }
           EOF
-          # Запускаем тесты. Используем '|| true', чтобы шаг не завершился с ошибкой,
-          # если оригинальный тест упадет, как мы и ожидаем.
+          # Запускаем тесты. Используем '|| true', чтобы шаг не завершился ошибкой.
           go test ./internal/... -v || true
       
       - name: Run go vet

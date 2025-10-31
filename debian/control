@@ -1,0 +1,58 @@
+Source: ssh-tpm-agent
+Section: golang
+Priority: optional
+Maintainer: Debian Go Packaging Team <team+pkg-go@tracker.debian.org>
+Uploaders: Dmitry <debian@dmitry.ms>
+XS-Go-Import-Path: github.com/foxboron/ssh-tpm-agent
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-golang,
+ asciidoctor,
+ golang-any,
+ golang-github-awnumar-memcall-dev,
+ golang-github-foxboron-go-tpm-keyfiles-dev,
+ golang-github-google-go-tpm-dev (>= 0.9.5-2),
+ golang-github-google-go-tpm-tools-dev,
+ golang-github-landlock-lsm-go-landlock-dev,
+ golang-github-rogpeppe-go-internal-dev,
+ golang-golang-x-crypto-dev,
+ golang-golang-x-sys-dev,
+ golang-golang-x-term-dev,
+ golang-golang-x-text-dev,
+ keyutils,
+ libssl-dev,
+ openssh-client
+Testsuite: autopkgtest-pkg-go
+Standards-Version: 4.7.2
+Homepage: https://github.com/foxboron/ssh-tpm-agent
+Vcs-Browser: https://salsa.debian.org/go-team/packages/ssh-tpm-agent
+Vcs-Git: https://salsa.debian.org/go-team/packages/ssh-tpm-agent.git
+
+Package: ssh-tpm-agent
+Section: admin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ keyutils
+Description: ssh-agent for TPMs (program)
+ SSH agent for TPM
+ .
+ ssh-tpm-agent is a ssh-agent compatible agent that allows keys to be
+ created by the Trusted Platform Module (TPM) for authentication towards
+ ssh servers.
+ .
+ This package contains the command-line tools.
+
+Package: golang-github-foxboron-ssh-tpm-agent-dev
+Architecture: all
+Multi-Arch: foreign
+Depends:
+ ${misc:Depends}
+Description: Go ssh-agent for TPMs (library)
+ ssh-tpm-agent is a ssh-agent compatible agent that allows keys to be
+ created by the Trusted Platform Module (TPM) for authentication towards
+ ssh servers.
+ .
+ This package contains the development library.

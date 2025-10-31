@@ -1,0 +1,4 @@
+man/ssh-tpm-agent.1
+man/ssh-tpm-add.1
+man/ssh-tpm-hostkeys.1
+man/ssh-tpm-keygen.1

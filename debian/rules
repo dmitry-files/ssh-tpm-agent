@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export DH_GOLANG_INSTALL_EXTRA = contrib/sshd
+
+%:
+	dh $@ --builddirectory=_build --buildsystem=golang
+
+override_dh_auto_build:
+	_VERSION="$$(dpkg-parsechangelog -S Version)"
+
+	export CGO_ENABLED=0
+	export DH_GOLANG_BUILDFLAGS="-buildmode=pie -trimpath -ldflags='-X main.Version=$${_VERSION}'"
+	export DH_GOLANG_BUILDPKG="github.com/foxboron/ssh-tpm-agent/cmd/..."
+
+	$(MAKE) man
+	dh_auto_build
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start

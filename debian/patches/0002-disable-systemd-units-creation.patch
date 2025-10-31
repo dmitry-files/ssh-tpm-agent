@@ -1,0 +1,372 @@
+From: Dmitry <debian@dmitry.ms>
+Date: Fri, 31 Oct 2025 19:11:28 +0000
+Subject: disable-systemd-units-creation
+
+Disables runtime creation of configuration files for systemd
+in order to allow installing them standard way by package manager.
+
+Last-Update: 2025-10-31
+---
+ cmd/ssh-tpm-agent/main.go    | 19 +---------
+ cmd/ssh-tpm-hostkeys/main.go | 15 ++------
+ contrib/contrib.go           | 11 ------
+ contrib/contrib_test.go      | 24 +++----------
+ man/ssh-tpm-agent.1.adoc     | 18 ++--------
+ man/ssh-tpm-hostkeys.1.adoc  |  7 +---
+ utils/utils.go               | 85 --------------------------------------------
+ 7 files changed, 11 insertions(+), 168 deletions(-)
+
+diff --git a/cmd/ssh-tpm-agent/main.go b/cmd/ssh-tpm-agent/main.go
+index 1b76351..73cae02 100644
+--- a/cmd/ssh-tpm-agent/main.go
++++ b/cmd/ssh-tpm-agent/main.go
+@@ -31,7 +31,6 @@ var Version string
+ const usage = `Usage:
+     ssh-tpm-agent [OPTIONS]
+     ssh-tpm-agent -l [PATH]
+-    ssh-tpm-agent --install-user-units
+ 
+ Options:
+     -l PATH                Path of the UNIX socket to open, defaults to
+@@ -59,9 +58,6 @@ Options:
+ 
+     -d                     Enable debug logging.
+ 
+-    --install-user-units   Installs systemd user units for using ssh-tpm-agent
+-                           as a service.
+-
+ ssh-tpm-agent is a program that loads TPM sealed keys for public key
+ authentication. It is an ssh-agent(1) compatible program and can be used for
+ ssh(1) authentication.
+@@ -113,7 +109,7 @@ func main() {
+ 	var (
+ 		socketPath, keyDir               string
+ 		swtpmFlag, printSocketFlag       bool
+-		installUserUnits, system, noLoad bool
++		noLoad                           bool
+ 		askOwnerPassword, debugMode      bool
+ 		noCache                          bool
+ 		hierarchy                        string
+@@ -126,8 +122,6 @@ func main() {
+ 	flag.BoolVar(&swtpmFlag, "swtpm", false, "use swtpm instead of actual tpm")
+ 	flag.BoolVar(&printSocketFlag, "print-socket", false, "print path of UNIX socket to stdout")
+ 	flag.StringVar(&keyDir, "key-dir", "", "path of the directory to look for keys in")
+-	flag.BoolVar(&installUserUnits, "install-user-units", false, "install systemd user units")
+-	flag.BoolVar(&system, "install-system", false, "install systemd user units")
+ 	flag.BoolVar(&noLoad, "no-load", false, "don't load TPM sealed keys")
+ 	flag.BoolVar(&askOwnerPassword, "o", false, "ask for the owner password")
+ 	flag.BoolVar(&askOwnerPassword, "owner-password", false, "ask for the owner password")
+@@ -148,17 +142,6 @@ func main() {
+ 
+ 	slog.SetDefault(logger)
+ 
+-	if installUserUnits {
+-		if err := utils.InstallUserUnits(system); err != nil {
+-			log.Fatal(err)
+-			fmt.Println(err.Error())
+-			os.Exit(1)
+-		}
+-
+-		fmt.Println("Enable with: systemctl --user enable --now ssh-tpm-agent.socket")
+-		os.Exit(0)
+-	}
+-
+ 	if socketPath == "" {
+ 		flag.Usage()
+ 		os.Exit(1)
+diff --git a/cmd/ssh-tpm-hostkeys/main.go b/cmd/ssh-tpm-hostkeys/main.go
+index efec686..f23984f 100644
+--- a/cmd/ssh-tpm-hostkeys/main.go
++++ b/cmd/ssh-tpm-hostkeys/main.go
+@@ -15,11 +15,9 @@ var Version string
+ 
+ const usage = `Usage:
+     ssh-tpm-hostkeys
+-    ssh-tpm-hostkeys --install-system-units
++    ssh-tpm-hostkeys --install-sshd-config
+ 
+ Options:
+-    --install-system-units    Installs systemd system units for using ssh-tpm-agent 
+-                              as a hostkey agent.
+     --install-sshd-config     Installs sshd configuration for the ssh-tpm-agent socket.
+ 
+ Display host keys.`
+@@ -30,22 +28,12 @@ func main() {
+ 	}
+ 
+ 	var (
+-		installSystemUnits bool
+ 		installSshdConfig  bool
+ 	)
+ 
+-	flag.BoolVar(&installSystemUnits, "install-system-units", false, "install systemd system units")
+ 	flag.BoolVar(&installSshdConfig, "install-sshd-config", false, "install sshd config")
+ 	flag.Parse()
+ 
+-	if installSystemUnits {
+-		if err := utils.InstallHostkeyUnits(); err != nil {
+-			log.Fatal(err)
+-		}
+-
+-		fmt.Println("Enable with: systemctl enable --now ssh-tpm-agent.socket")
+-		os.Exit(0)
+-	}
+ 	if installSshdConfig {
+ 		if err := utils.InstallSshdConf(); err != nil {
+ 			log.Fatal(err)
+@@ -76,3 +64,4 @@ func main() {
+ 		fmt.Println(k.String())
+ 	}
+ }
++
+diff --git a/contrib/contrib.go b/contrib/contrib.go
+index 686bdae..bb7cebf 100644
+--- a/contrib/contrib.go
++++ b/contrib/contrib.go
+@@ -5,9 +5,6 @@ import (
+ 	"path"
+ )
+ 
+-//go:embed services/*
+-var services embed.FS
+-
+ //go:embed sshd/*
+ var sshd embed.FS
+ 
+@@ -21,14 +18,6 @@ func readPath(f embed.FS, s string) map[string][]byte {
+ 	return ret
+ }
+ 
+-func EmbeddedUserServices() map[string][]byte {
+-	return readPath(services, "services/user")
+-}
+-
+-func EmbeddedSystemServices() map[string][]byte {
+-	return readPath(services, "services/system")
+-}
+-
+ func EmbeddedSshdConfig() map[string][]byte {
+ 	return readPath(sshd, "sshd")
+ }
+diff --git a/contrib/contrib_test.go b/contrib/contrib_test.go
+index 42f7630..f6d2f73 100644
+--- a/contrib/contrib_test.go
++++ b/contrib/contrib_test.go
+@@ -1,26 +1,12 @@
+ package contrib
+ 
+ import (
+-	"testing"
++        "testing"
+ )
+ 
+-func TestUserServices(t *testing.T) {
+-	m := EmbeddedUserServices()
+-	if len(m) != 2 {
+-		t.Fatalf("invalid number of entries")
+-	}
+-}
+-
+-func TestSystemServices(t *testing.T) {
+-	m := EmbeddedSystemServices()
+-	if len(m) != 3 {
+-		t.Fatalf("invalid number of entries")
+-	}
+-}
+-
+ func TestSshdConfig(t *testing.T) {
+-	m := EmbeddedSshdConfig()
+-	if len(m) != 1 {
+-		t.Fatalf("invalid number of entries")
+-	}
++        m := EmbeddedSshdConfig()
++        if len(m) != 1 {
++                t.Fatalf("invalid number of entries")
++        }
+ }
+diff --git a/man/ssh-tpm-agent.1.adoc b/man/ssh-tpm-agent.1.adoc
+index 2998908..24bead9 100644
+--- a/man/ssh-tpm-agent.1.adoc
++++ b/man/ssh-tpm-agent.1.adoc
+@@ -12,8 +12,6 @@ ssh-tpm-agent - ssh-agent for TPM 2.0 keys
+ 
+ *ssh-tpm-agent* *--print-socket*
+ 
+-*ssh-tpm-agent* *--install-user-units*
+-
+ == Description
+ 
+ *ssh-tpm-agent* is a program that created keys utilizing a Trusted Platform
+@@ -61,9 +59,6 @@ Available hierarchies:
+ *-d*::
+   Enable debug logging.
+ 
+-*--install-user-units*::
+-  Installs systemd system units and sshd configs for using ssh-tpm-agent as a hostkey agent.
+-
+ *--swtpm*::
+   Stores keys inside a swtpm instance instead of the actual TPM. This is not a security feature and your keys are not stored securely.
+ +
+@@ -131,9 +126,6 @@ but want to rely on one socket.
+ 
+ === Hostkeys usage
+ *ssh-tpm-agent* can also be used to serve host keys for an ssh server.
+-*ssh-tpm-hostkeys* has convenient flags to help install systemd configurations
+-and services to the system. This will create a system socket for ssh-tpm-agent
+-under _/var/tmp/ssh-tpm-agent.sock_.
+ 
+   $ sudo ssh-tpm-keygen -A
+   2023/09/03 17:03:08 INFO Generating new ECDSA host key
+@@ -141,12 +133,6 @@ under _/var/tmp/ssh-tpm-agent.sock_.
+   2023/09/03 17:03:08 INFO Generating new RSA host key
+   2023/09/03 17:03:15 INFO Wrote /etc/ssh/ssh_tpm_host_rsa_key.tpm
+ 
+-  $ sudo ssh-tpm-hostkeys --install-system-units
+-  Installed /usr/lib/systemd/system/ssh-tpm-agent.service
+-  Installed /usr/lib/systemd/system/ssh-tpm-agent.socket
+-  Installed /usr/lib/systemd/system/ssh-tpm-genkeys.service
+-  Enable with: systemctl enable --now ssh-tpm-agent.socket
+-
+   $ sudo ssh-tpm-hostkeys --install-sshd-config
+   Installed /etc/ssh/sshd_config.d/10-ssh-tpm-agent.conf
+   Restart sshd: systemd restart sshd
+@@ -162,8 +148,8 @@ under _/var/tmp/ssh-tpm-agent.sock_.
+   # localhost:22 SSH-2.0-OpenSSH_9.4
+   localhost ecdsa-sha2-nistp256 AAAAE2V[...]YNwqWY0=
+ 
+-Alternatively one can omit the embedded install flags and just include a drop-in
+-configuration for sshd under /etc/ssh/sshd_config.d with the following content.
++Alternatively one can omit the embedded sshd config install flag and just include
++a drop-in configuration for sshd under /etc/ssh/sshd_config.d with the following content.
+ 
+   HostKeyAgent /var/tmp/ssh-tpm-agent.sock
+   HostKey /etc/ssh/ssh_tpm_host_ecdsa_key.pub
+diff --git a/man/ssh-tpm-hostkeys.1.adoc b/man/ssh-tpm-hostkeys.1.adoc
+index 6c0e98c..58cd2d7 100644
+--- a/man/ssh-tpm-hostkeys.1.adoc
++++ b/man/ssh-tpm-hostkeys.1.adoc
+@@ -10,20 +10,15 @@ ssh-tpm-hostkeys - ssh-tpm-agent hostkey utility
+ 
+ *ssh-tpm-hostkeys*
+ 
+-*ssh-tpm-hostkeys* *--install-system-units*
+-
+ *ssh-tpm-hostkeys* *--install-sshd-config*
+ 
+ == Description
+ 
+ *ssh-tpm-hostkeys* displays the system host keys, and can install relevant
+-systemd units and sshd configuration to use TPM backed host keys.
++sshd configuration to use TPM backed host keys.
+ 
+ == Options
+ 
+-*--install-system-units*::
+-  Installs systemd system units for using ssh-tpm-agent as a hostkey agent.
+-
+ *--install-sshd-config*::
+   Installs sshd configuration for the ssh-tpm-agent socket.
+ 
+diff --git a/utils/utils.go b/utils/utils.go
+index 16e18e4..9fdb7b5 100644
+--- a/utils/utils.go
++++ b/utils/utils.go
+@@ -3,7 +3,6 @@ package utils
+ import (
+ 	"errors"
+ 	"fmt"
+-	"html/template"
+ 	"io/fs"
+ 	"os"
+ 	"path"
+@@ -27,90 +26,6 @@ func FileExists(s string) bool {
+ 	return !errors.Is(err, fs.ErrNotExist)
+ }
+ 
+-// This is the sort of things I swore I'd never write.
+-// but here we are.
+-func fmtSystemdInstallPath() string {
+-	DESTDIR := ""
+-	if val, ok := os.LookupEnv("DESTDIR"); ok {
+-		DESTDIR = val
+-	}
+-
+-	PREFIX := "/usr/"
+-	if val, ok := os.LookupEnv("PREFIX"); ok {
+-		PREFIX = val
+-	}
+-
+-	return path.Join(DESTDIR, PREFIX, "lib/systemd")
+-}
+-
+-// Installs user units to the target system.
+-// It will either place the files under $HOME/.config/systemd/user or if global
+-// is supplied (through --install-system) into system user directories.
+-//
+-// Passing the env TEMPLATE_BINARY will use /usr/bin/ssh-tpm-agent for the
+-// binary in the service
+-func InstallUserUnits(global bool) error {
+-	if global || os.Getuid() == 0 { // If ran as root, install global system units
+-		return installUnits(path.Join(fmtSystemdInstallPath(), "/user/"), contrib.EmbeddedUserServices())
+-	}
+-
+-	dirname, err := os.UserHomeDir()
+-	if err != nil {
+-		return err
+-	}
+-
+-	return installUnits(path.Join(dirname, ".config/systemd/user"), contrib.EmbeddedUserServices())
+-}
+-
+-func InstallHostkeyUnits() error {
+-	return installUnits(path.Join(fmtSystemdInstallPath(), "/system/"), contrib.EmbeddedSystemServices())
+-}
+-
+-func installUnits(installPath string, files map[string][]byte) (err error) {
+-	execPath := os.Getenv("TEMPLATE_BINARY")
+-	if execPath == "" {
+-		execPath, err = os.Executable()
+-		if err != nil {
+-			return err
+-		}
+-	}
+-
+-	if !FileExists(installPath) {
+-		if err := os.MkdirAll(installPath, 0o750); err != nil {
+-			return fmt.Errorf("creating service installation directory: %w", err)
+-		}
+-	}
+-
+-	for name := range files {
+-		servicePath := path.Join(installPath, name)
+-		if FileExists(servicePath) {
+-			fmt.Printf("%s exists. Not installing units.\n", servicePath)
+-			return nil
+-		}
+-	}
+-
+-	for name, data := range files {
+-		servicePath := path.Join(installPath, name)
+-
+-		f, err := os.OpenFile(servicePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+-		if err != nil {
+-			return err
+-		}
+-		defer f.Close()
+-
+-		t := template.Must(template.New("service").Parse(string(data)))
+-		if err = t.Execute(f, &map[string]string{
+-			"GoBinary": execPath,
+-		}); err != nil {
+-			return err
+-		}
+-
+-		fmt.Printf("Installed %s\n", servicePath)
+-	}
+-
+-	return nil
+-}
+-
+ func InstallSshdConf() error {
+ 	// If ran as root, install sshd config
+ 	if uid := os.Getuid(); uid != 0 {

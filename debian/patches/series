@@ -1,0 +1,4 @@
+0001-disable-ca-support.patch
+0002-disable-systemd-units-creation.patch
+0003-increase-tests-deadline.patch
+0004-update-makefile-version-source.patch

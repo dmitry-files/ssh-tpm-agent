@@ -1,0 +1,36 @@
+From: Dmitry <debian@dmitry.ms>
+Date: Fri, 31 Oct 2025 19:11:29 +0000
+Subject: update-makefile-version-source
+
+Use the standard `dpkg-parsechangelog` utility to determine
+the build version in the Makefile.
+
+This ensures the version embedded into man pages is consistent
+with the Debian package version from the changelog.
+
+Last-Update: 2025-10-31
+---
+ Makefile | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 3d27dcc..de20b26 100644
+--- a/Makefile
++++ b/Makefile
+@@ -5,7 +5,15 @@ SHRDIR := $(PREFIX)/share
+ MANDIR := $(PREFIX)/share/man
+ BINS = $(filter-out %_test.go,$(notdir $(wildcard cmd/*)))
+ TAG = $(shell git describe --abbrev=0 --tags)
+-VERSION = $(shell git describe --abbrev=7 | sed 's/-/./g;s/^v//;')
++
++# Get the package version from debian/changelog.
++# Using ':=' to execute the shell command only once.
++VERSION := $(shell dpkg-parsechangelog -S Version 2>/dev/null)
++
++# Fail if the version could not be determined for some reason.
++ifeq ($(VERSION),)
++$(error Failed to get version from debian/changelog. Aborting.)
++endif
+ 
+ MANPAGES = \
+ 	man/ssh-tpm-hostkeys.1 \

@@ -1,0 +1,24 @@
+From: Dmitry <debian@dmitry.ms>
+Date: Fri, 31 Oct 2025 19:11:29 +0000
+Subject: increase-tests-deadline
+
+Ensures all tests are being passed in "slow" environments also.
+
+Last-Update: 2025-10-31
+---
+ cmd/scripts_test.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/cmd/scripts_test.go b/cmd/scripts_test.go
+index e280f96..0a24847 100644
+--- a/cmd/scripts_test.go
++++ b/cmd/scripts_test.go
+@@ -26,7 +26,7 @@ func ScriptsWithPath(t *testing.T, path string) {
+ 		t.Fatal(string(out))
+ 	}
+ 	testscript.Run(t, testscript.Params{
+-		Deadline: time.Now().Add(5 * time.Second),
++		Deadline: time.Now().Add(30 * time.Second),
+ 		Setup: func(e *testscript.Env) error {
+ 			e.Setenv("PATH", tmp+string(filepath.ListSeparator)+e.Getenv("PATH"))
+ 			e.Vars = append(e.Vars, "_SSH_TPM_AGENT_SIMULATOR=1")

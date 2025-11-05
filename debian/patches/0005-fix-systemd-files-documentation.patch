@@ -1,0 +1,49 @@
+From: Dmitry <debian@dmitry.ms>
+Date: Sun, 2 Nov 2025 21:31:54 +0000
+Subject: fix-systemd-files-documentation
+
+Updated "Documentation" keys to point to the correct manual pages.
+
+Last-Update: 2025-11-02
+---
+ contrib/services/system/ssh-tpm-agent.service   | 2 +-
+ contrib/services/system/ssh-tpm-agent.socket    | 2 +-
+ contrib/services/system/ssh-tpm-genkeys.service | 1 +
+ 3 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/contrib/services/system/ssh-tpm-agent.service b/contrib/services/system/ssh-tpm-agent.service
+index fba5bcf..540e1c4 100644
+--- a/contrib/services/system/ssh-tpm-agent.service
++++ b/contrib/services/system/ssh-tpm-agent.service
+@@ -1,7 +1,7 @@
+ [Unit]
+ ConditionEnvironment=!SSH_AGENT_PID
+ Description=ssh-tpm-agent service
+-Documentation=man:ssh-agent(1) man:ssh-add(1) man:ssh(1)
++Documentation=man:ssh-tpm-agent(1) man:ssh-tpm-add(1)
+ Wants=ssh-tpm-genkeys.service
+ After=ssh-tpm-genkeys.service
+ After=network.target
+diff --git a/contrib/services/system/ssh-tpm-agent.socket b/contrib/services/system/ssh-tpm-agent.socket
+index 5758356..3a59e69 100644
+--- a/contrib/services/system/ssh-tpm-agent.socket
++++ b/contrib/services/system/ssh-tpm-agent.socket
+@@ -1,6 +1,6 @@
+ [Unit]
+ Description=SSH TPM agent socket
+-Documentation=man:ssh-agent(1) man:ssh-add(1) man:ssh(1)
++Documentation=man:ssh-tpm-agent(1) man:ssh-tpm-add(1)
+ 
+ [Socket]
+ ListenStream=/var/tmp/ssh-tpm-agent.sock
+diff --git a/contrib/services/system/ssh-tpm-genkeys.service b/contrib/services/system/ssh-tpm-genkeys.service
+index 625deab..c1af307 100644
+--- a/contrib/services/system/ssh-tpm-genkeys.service
++++ b/contrib/services/system/ssh-tpm-genkeys.service
+@@ -1,5 +1,6 @@
+ [Unit]
+ Description=SSH TPM Key Generation
++Documentation=man:ssh-tpm-keygen(1)
+ ConditionPathExists=|!/etc/ssh/ssh_tpm_host_ecdsa_key.tpm
+ ConditionPathExists=|!/etc/ssh/ssh_tpm_host_ecdsa_key.pub
+ ConditionPathExists=|!/etc/ssh/ssh_tpm_host_rsa_key.tpm

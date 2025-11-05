@@ -1,0 +1,6 @@
+ssh-tpm-agent (0.8.0-1) unstable; urgency=medium
+
+  * Initial release. (Closes: #1082814: ITP: ssh-tpm-agent -- ssh-agent
+    for TPMs)
+
+ -- Dmitry <debian@dmitry.ms>  Fri, 31 Oct 2025 19:11:13 +0000

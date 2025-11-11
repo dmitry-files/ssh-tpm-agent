@@ -9,7 +9,6 @@ export DH_GOLANG_INSTALL_EXTRA = contrib/sshd
 
 override_dh_auto_build:
 	export CGO_ENABLED=0
-	export DH_GOLANG_BUILDFLAGS="-buildmode=pie -trimpath -ldflags='-X main.Version=$(DEB_VERSION)'"
 	export DH_GOLANG_BUILDPKG="github.com/foxboron/ssh-tpm-agent/cmd/..."
 	$(MAKE) man
 	dh_auto_build

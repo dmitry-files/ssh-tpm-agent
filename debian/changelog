@@ -3,4 +3,15 @@ ssh-tpm-agent (0.8.0-1) unstable; urgency=medium
   * Initial release. (Closes: #1082814: ITP: ssh-tpm-agent -- ssh-agent
     for TPMs)
 
+  * Key provisioning by Certificate Authority (CA) was disabled.
+
+    This functionality depends on the ssh-tpm-ca-authority project,
+    which at the time of writing is still considered a work-in-progress
+    by its author and has no stable releases.
+
+    See 0001-disable-ca-support.patch.
+
+  * Deadline setting for tests was increased in
+    0003-increase-tests-deadline.patch
+
  -- Dmitry <debian@dmitry.ms>  Fri, 31 Oct 2025 19:11:13 +0000
